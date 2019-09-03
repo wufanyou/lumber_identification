@@ -1,6 +1,6 @@
 # Modify from offical 
 # Authod: IconBall
-import sys
+from utils import *
 import os
 import torch
 import torch.nn as nn
@@ -14,10 +14,8 @@ import time
 from tqdm import tqdm
 import warnings
 warnings.simplefilter("ignore", UserWarning)
-from PIL import Image
 import pandas as pd
-from PIL import Image
-from sklearn.model_selection import StratifiedShuffleSplit
+import argparse
 
 def pil_loader(path):
     # open path as file to avoid ResourceWarning (https://github.com/python-pillow/Pillow/issues/835)
@@ -30,7 +28,7 @@ def make_dataset(dir,fold,dataset=None,list_file='./list.csv'):
     data['code']=data.label.astype('category').cat.codes
     if (fold is not None)&(dataset!='test'):
         data=data[data.fold!=fold].reset_index(drop=True)
-        sss=StratifiedShuffleSplit(n_splits=1,test_size=0.125,random_state=1024)
+        sss=StratifiedShuffleSplit(n_splits=1,test_size=0.125,random_state=512)
         train,val=list(sss.split(data,data.code))[0]
         if dataset=='train':
             data=data[data.index.isin(train)]
@@ -89,31 +87,25 @@ def set_parameter_requires_grad(model, feature_extracting):
 def getModel(model_name,num_feats,pretrained=True):
      
     if model_name=='resnet50':
-        model=torchvision.models.resnet50(pretrained=pretrained)
-        model.fc=nn.Linear(model.fc.in_features,num_feats)
-        setattr(model,'input_size',(3,224,224))     
+        model = torchvision.models.resnet50(pretrained=pretrained)
+        model.fc = nn.Linear(model.fc.in_features,num_feats)
+        setattr(model,'input_size',(3,224,224))  
         
-    if model_name=='InceptionV4':
-        model=inv4.InceptionV4(num_classes=num_feats)
+    if model_name=='densenet121':
+        model = torch.hub.load('pytorch/vision', 'densenet121', pretrained=True)
+        model.classifier = nn.Linear(in_features=1024, out_features=num_feats, bias=True)
+        setattr(model,'input_size',(3,224,224))   
+    
+    if model_name=='mobilenet_v2':
+        model = torchvision.models.mobilenet_v2(pretrained=pretrained)
+        model.classifier[1] = nn.Linear(in_features=1280, out_features=num_feats, bias=True)
         setattr(model,'input_size',(3,224,224))
-        
-    if model_name=='VGG16':
-        model=torchvision.models.vgg16_bn(pretrained=pretrained)
-        seq=list(model.classifier.children())[:-1]+[torch.nn.Linear(4096,num_feats)]
-        model.classifier=torch.nn.Sequential(*seq)
-        setattr(model,'input_size',(3,224,224))
-        
-    if model_name=='xception':
-        model=xc.Xception(num_classes=num_feats)
-        setattr(model,'input_size',(3,224,224))
-        
-    if model_name=='inceptionresnetv2':
-        model=InceptionResNetV2(num_classes=num_feats)
-        setattr(model,'input_size',(3,224,224))
+    
     return model
 
 def train_model(model, dataloaders, criterion, params_to_update,num_epochs=25, is_inception=False,best_acc=0,early_stop_round=5):
-    lr=0.045
+    lr=LR
+    #lr=0.025
     optimizer=optim.SGD(params_to_update,lr=lr,momentum=0.9)   
     since = time.time()
     epoch_acc=0
@@ -125,7 +117,7 @@ def train_model(model, dataloaders, criterion, params_to_update,num_epochs=25, i
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
         print('-' * 10)
         # Each epoch has a training and validation phase
-        for phase in ['train','val']:
+        for phase in ['val','train']:
         #for phase in [ 'val','train']:
             if phase == 'train':
                 model.train()  # Set model to training mode
@@ -138,9 +130,9 @@ def train_model(model, dataloaders, criterion, params_to_update,num_epochs=25, i
             dataphase=tqdm(dataloaders[phase])
             for inputs, labels in dataphase:
                 if phase=='val':
-                    dataphase.set_description(f"[{MODEL_NAME}][{epoch}] evaluating")
+                    dataphase.set_description(f"[{MODEL_NAME}_{NUM_FOLD}][{epoch}] evaluating")
                 else:
-                    dataphase.set_description(f"[{MODEL_NAME}][{epoch}][{best_acc:.4f}][{last_epoch_acc:.4f}]")
+                    dataphase.set_description(f"[{MODEL_NAME}_{NUM_FOLD}][{epoch}][{best_acc:.4f}][{last_epoch_acc:.4f}]")
                 inputs = inputs.to(device)
                 labels = labels.to(device)
                 #labels = torch.LongTensor(labels[:,0]).view(-1).to(device)
@@ -179,12 +171,12 @@ def train_model(model, dataloaders, criterion, params_to_update,num_epochs=25, i
             #if epoch_acc>=0.99:
                #return model
             if phase == 'val':
-                print(f"[{MODEL_NAME}][{epoch}][{best_acc:.4f}][{epoch_acc:.4f}]")
+                print(f"[{MODEL_NAME}_{NUM_FOLD}][{epoch}][{best_acc:.4f}][{epoch_acc:.4f}]")
                 val_loss_history.append(epoch_acc)
                 if epoch_acc > best_acc:
                     early_stop_counter=0
                     best_acc = epoch_acc
-                    best_model_wts = copy.deepcopy(model.state_dict())
+                    #best_model_wts = copy.deepcopy(model.state_dict())
                     torch.save(model.state_dict(),f'{MODEL_NAME}_fold_{NUM_FOLD}_best.pth')
                 else:
                     early_stop_counter+=1
@@ -202,16 +194,28 @@ def train_model(model, dataloaders, criterion, params_to_update,num_epochs=25, i
 
 
 if __name__=='__main__':
-    
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--MODEL_NAME',type=str, default='resnet50')
+    parser.add_argument('--EPOCHS',type=int, default=10)
+    parser.add_argument('--NUM_FOLD',type=int, default=0)
+    parser.add_argument('--LR',type=float, default=0.045)
+    args = parser.parse_args()
+
+    NUM_EPOCHS=args.EPOCHS
+    NUM_FOLD=args.NUM_FOLD
+    MODEL_NAME=args.MODEL_NAME
+    LR=args.LR
+
     NUM_FEATS=11
-    NUM_EPOCHS=50
-    NUM_FOLD=1
-    MODEL_NAME='resnet50'
     PRETRAINED=True
-    
-    
     is_inception=True if MODEL_NAME=='InceptionV3' else False
-    model = getModel(MODEL_NAME,NUM_FEATS,PRETRAINED)
+
+    model = getModel(MODEL_NAME,NUM_FEATS,PRETRAINED).cuda()
+    try:
+        model.load_state_dict(torch.load(f'{MODEL_NAME}_fold_{NUM_FOLD}_best.pth'))
+    except:
+        print('load fail')
     train_transform=torchvision.transforms.Compose([
         #torchvision.transforms.Resize((224,224)),
 	#torchvision.transforms.RandomResizedCrop((224,224),(0.8,1.2),(1,1)),
@@ -220,7 +224,7 @@ if __name__=='__main__':
             torchvision.transforms.RandomRotation((-30,30)),
             torchvision.transforms.RandomHorizontalFlip(p=0.5),
             torchvision.transforms.RandomVerticalFlip(p=0.5),
-            torchvision.transforms.RandomGrayscale(p=1),
+            torchvision.transforms.RandomGrayscale(p=0.1),
         ]),
         torchvision.transforms.ToTensor(),
         torchvision.transforms.Lambda(lambda x:x*2-1),
@@ -237,17 +241,14 @@ if __name__=='__main__':
     trainloader = torch.utils.data.DataLoader(train,batch_size=64, shuffle=True)
     evalloader = torch.utils.data.DataLoader(val,batch_size=64, shuffle=False)
     dataloaders_dict={'train':trainloader,'val':evalloader}
+    #dataloaders_dict={'val':evalloader}
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     
     # Send the model to GPU
     model = model.to(device)
     model.train()
     params_to_update = model.parameters()
-    print("Params to learn:")
-    for name,param in model.named_parameters():
-        if param.requires_grad == True:
-            print("\t",name)
     criterion=nn.CrossEntropyLoss(reduction='mean')
     # Train and evaluate
-    model = train_model(model, dataloaders_dict, criterion, params_to_update,num_epochs=NUM_EPOCHS, is_inception=is_inception,best_acc=0,early_stop_round=20)
+    model = train_model(model, dataloaders_dict, criterion, params_to_update,num_epochs=NUM_EPOCHS, is_inception=is_inception,best_acc=0,early_stop_round=50)
     torch.save(model.state_dict(),f'{MODEL_NAME}_fold_{NUM_FOLD}_final.pth')

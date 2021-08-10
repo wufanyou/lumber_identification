@@ -1,9 +1,16 @@
 # Lumber Identification
-This project is the source code and example images for the potential paper:
+The code repository for paper: Wood Identification Based on Longitudinal Section Images by Using Deep Learning.
 
-*Deep Learning for Wood identification based on longitudinal section images*
+Paper can be viewed here [here](https://link.springer.com/article/10.1007/s00226-021-01261-1).
 
-Fanyou Wu, Rado Gazo, Eva Haviarova and Bedrich Benes 
+Cite the paper as follow (bibtex):
 
-Purdue University
-
+```bibtex
+@article{wu2021wood,
+  title = {Wood Identification Based on Longitudinal Section Images by Using Deep Learning},
+  author = {Wu, Fanyou and Gazo, Rado and Haviarova, Eva and Benes, Bedrich},
+  journal = {Wood Science and Technology},
+  year = {2021},
+  doi = {10.1007/s00226-021-01261-1}
+}
+```
